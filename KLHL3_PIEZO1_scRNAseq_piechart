@@ -1,0 +1,219 @@
+setwd("~/single_cell/")
+library(Seurat)
+library(SeuratDisk)
+library(SeuratData)
+library(ggplot2)
+library(RColorBrewer)
+library(tidyverse)
+library(ggpubr)
+library(dplyr)
+library(cowplot)
+
+# Load KPMP scRNAseq data
+
+data <- LoadH5Seurat("521c5b34-3dd0-4871-8064-61d3e3f1775a_PREMIERE_Alldatasets_08132021.h5Seurat", assays = "data")
+
+# Extract only "LivingDonor(LD)" data
+data_ld <- subset(data, subset = sampletype == "LD")
+data_ld$sampletype <- factor(data_ld$sampletype, levels = c("LD"))
+
+# Set cluster identifiers
+data_ld <- SetIdent(data_ld, value = data_ld@meta.data$subclass.l1)
+
+# Save UMAP plot output in TIFF format
+tiff("Umap_KPMP_LD.tiff", height=5, width=7, units="in", res=600)
+DimPlot(data_ld, reduction = "umap", label = TRUE, repel = TRUE, order = c("Immune","Interstitial","IC","PC","CNT","DCT","TAL","ATL/TAL","DTL","PT","POD","PEC","EC"))
+dev.off()
+
+# Save FeaturePlot output in TIFF format (without labels)
+tiff("feature_KLHL3_data_ld.tiff", height=7, width=9, units="in", res=600)
+FeaturePlot(data_ld, features = c("KLHL3"), label = FALSE) +
+    theme(
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        plot.title = element_blank(),
+        axis.ticks = element_blank(),  
+        axis.line = element_blank(),  
+        panel.grid = element_blank(), 
+        panel.border = element_blank() 
+    )
+dev.off()
+
+tiff("feature_PIEZO1_data_ld.tiff", height=7, width=9, units="in", res=600)
+FeaturePlot(data_ld, features = c("PIEZO1"), label = FALSE) +
+    theme(
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        plot.title = element_blank(),
+        axis.ticks = element_blank(),  
+        axis.line = element_blank(),  
+        panel.grid = element_blank(), 
+        panel.border = element_blank() 
+    )
+dev.off()
+
+# Bubble plot for KLHL3 and PIEZO1
+
+# Define display order
+cell_order <- factor(c("EC", "PEC", "POD", "PT", "DTL", "ATL/TAL", "TAL", "DCT", "CNT", "PC", "IC", "Interstitial", "Immune"), 
+                     levels = c("EC", "PEC", "POD", "PT", "DTL", "ATL/TAL", "TAL", "DCT", "CNT", "PC", "IC", "Interstitial", "Immune"))
+# Reset data with custom order
+data_ld$cell_type <- Idents(data_ld)
+data_ld$cell_type <- factor(data_ld$cell_type, levels = levels(cell_order))
+Idents(data_ld) <- data_ld$cell_type
+
+# Define variables for common color settings
+col_min <- -0.4
+col_max <- 2.0
+dot_scale <- 8.4
+
+# Combined bubble plot for both genes (without legend)
+tiff("Bubble_KLHL3_PIEZO1_LD.tif", height=1.6, width=4.5, units="in", res=600)
+DotPlot(data_ld, features = c("KLHL3", "PIEZO1"), 
+        dot.scale = dot_scale, 
+        col.min = col_min, 
+        col.max = col_max) + 
+    RotatedAxis() + 
+    coord_flip() +
+    NoLegend() +
+    theme(axis.title = element_blank())
+dev.off()
+
+# Save legend only to separate file - set to same colors as bubble plot
+tiff("Legend_KLHL3_PIEZO1_LD.tif", height=3, width=2.5, units="in", res=600)
+
+# First create normal DotPlot to check colors
+temp_plot <- DotPlot(data_ld, features = c("KLHL3", "PIEZO1"), 
+                     dot.scale = dot_scale, 
+                     col.min = col_min, 
+                     col.max = col_max)
+
+# Create legend with precise intervals (using default colors)
+legend_plot <- DotPlot(data_ld, features = c("KLHL3", "PIEZO1"), 
+                       dot.scale = dot_scale, 
+                       col.min = col_min, 
+                       col.max = col_max) +
+    # Remove scale_color_gradient to maintain default colors
+    # Instead, only customize legend display with guides function
+    guides(color = guide_colorbar(
+        ticks = TRUE,
+        barwidth = 1,
+        barheight = 5,
+        breaks = c(0.0, 1.0, 2.0)  # Explicitly set intervals at 0, 1.0, 2.0
+    ))
+
+# Extract legend only
+legend <- cowplot::get_legend(legend_plot)
+
+# Create plot with legend only
+cowplot::plot_grid(legend)
+dev.off()
+
+# Examine PIEZO1 expression in cells expressing KLHL3
+# --- 1) Extract target clusters ---
+data_subset <- subset(
+  data_ld,
+  subset = subclass.l1 %in% c("DCT", "CNT", "PC")
+)
+
+# --- 2) Extract only cells expressing KLHL3 ---
+data_klhl3_positive <- subset(data_subset, subset = KLHL3 > 0)
+
+# --- 3) Classify PIEZO1 expression status ---
+expr_data <- FetchData(data_klhl3_positive, vars = c("PIEZO1", "subclass.l1"))
+
+# Classify PIEZO1 expression presence
+expr_data$PIEZO1_Category <- ifelse(expr_data$PIEZO1 > 0, "Expressed", "Not Expressed")
+
+# Maintain cluster information
+expr_data$Cluster <- expr_data$subclass.l1
+
+# --- 4) Create directory for graph storage ---
+dir.create("pie_charts", showWarnings = FALSE)
+
+# --- 5) Create legend-only plot ---
+# Dummy data for legend
+legend_data <- data.frame(
+    Expression = factor(c("Expressed", "Not Expressed"), 
+                       levels = c("Expressed", "Not Expressed")),
+    value = c(1, 1)
+)
+
+# Legend for PIEZO1
+piezo1_legend <- ggplot(legend_data, aes(x = 1, y = value, fill = Expression)) +
+    geom_bar(stat = "identity") +
+    scale_fill_manual(values = c("Expressed" = "blue", "Not Expressed" = "grey80"),
+                     breaks = c("Expressed", "Not Expressed"),
+                     name = "Expression") +
+    theme_void() +
+    theme(legend.position = "right",
+          text = element_text(size = 16))
+
+# Extract legend only
+piezo1_legend_only <- cowplot::get_legend(piezo1_legend)
+
+# Save legend
+ggsave("pie_charts/PIEZO1_legend.png", plot = cowplot::ggdraw(piezo1_legend_only), 
+       width = 2.5, height = 2, dpi = 600)
+ggsave("pie_charts/PIEZO1_legend.tif", plot = cowplot::ggdraw(piezo1_legend_only), 
+       width = 2.5, height = 2, dpi = 600)
+
+# --- 6) Create and save pie charts ---
+# Create graph for each cluster
+clusters <- unique(expr_data$Cluster)
+
+for (cluster in clusters) {
+    # Extract data for each cluster
+    cluster_data <- expr_data[expr_data$Cluster == cluster,]
+    
+    # PIEZO1 graph (with legend)
+    piezo1_plot <- cluster_data %>%
+        group_by(PIEZO1_Category) %>%
+        summarise(Count = n()) %>%
+        mutate(Proportion = Count/sum(Count) * 100) %>%
+        ggplot(aes(x = "", y = Proportion, 
+                 fill = factor(PIEZO1_Category, levels = c("Not Expressed", "Expressed")))) +
+        geom_bar(stat = "identity", width = 1) +
+        coord_polar("y", start = 0) +
+        scale_fill_manual(values = c("Not Expressed" = "grey80", "Expressed" = "blue"),
+                         breaks = c("Expressed", "Not Expressed")) +
+        labs(title = paste("PIEZO1 in", cluster),
+             fill = "Expression") +
+        theme_void() +
+        theme(text = element_text(size = 16),
+              plot.title = element_text(hjust = 0.5))
+    
+    # PIEZO1 graph (no legend, no title)
+    piezo1_plot_nolegend <- cluster_data %>%
+        group_by(PIEZO1_Category) %>%
+        summarise(Count = n()) %>%
+        mutate(Proportion = Count/sum(Count) * 100) %>%
+        ggplot(aes(x = "", y = Proportion, 
+                 fill = factor(PIEZO1_Category, levels = c("Not Expressed", "Expressed")))) +
+        geom_bar(stat = "identity", width = 1) +
+        coord_polar("y", start = 0) +
+        scale_fill_manual(values = c("Not Expressed" = "grey80", "Expressed" = "blue")) +
+        theme_void() +
+        theme(legend.position = "none")
+    
+    # Save graphs (with legend - TIF)
+    ggsave(paste0("pie_charts/PIEZO1_", cluster, "_with_legend.tif"), piezo1_plot, width = 6, height = 6, dpi = 600)
+    
+    # Save graphs (no legend - TIF)
+    ggsave(paste0("pie_charts/PIEZO1_", cluster, "_no_legend.tif"), piezo1_plot_nolegend, width = 6, height = 6, dpi = 600)
+    
+    # Display graphs
+    print(piezo1_plot)
+    print(piezo1_plot_nolegend)
+}
+
+# --- 7) Output calculation results ---
+# Summarize PIEZO1 expression proportions by cluster
+piezo1_summary <- expr_data %>%
+  group_by(Cluster, PIEZO1_Category) %>%
+  summarise(Count = n(), .groups = "drop") %>%
+  group_by(Cluster) %>%
+  mutate(Proportion = Count / sum(Count) * 100)
+
+cat("PIEZO1 expression percentage by cluster:\n")
+print(piezo1_summary)
