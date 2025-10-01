@@ -1,11 +1,8 @@
 setwd("~/single_cell/")
 library(Seurat)
 library(SeuratDisk)
-library(SeuratData)
 library(ggplot2)
-library(RColorBrewer)
 library(tidyverse)
-library(ggpubr)
 library(dplyr)
 library(cowplot)
 
